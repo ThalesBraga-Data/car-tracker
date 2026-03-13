@@ -1,14 +1,13 @@
 import os
-import asyncio
-from playwright.async_api import async_playwright
 import requests
 
 TOKEN = os.environ["TELEGRAM_TOKEN"]
 CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 
+# URLs de API interna do Webmotors (filtradas pelos carros que você quer)
 URLS = [
-    "https://www.webmotors.com.br/carros/sp-campinas/fiat/argo/de.2020?tipoveiculo=carros&localizacao=-22.9099384%2C-47.0626332x100km&estadocidade=S%C3%A3o%20Paulo-Campinas&marca1=FIAT&modelo1=ARGO&kmde=999&kmate=50000&anunciante=Concession%C3%A1ria%7CLoja&o=5&page=1&anode=2020&precoate=62000",
-    "https://www.webmotors.com.br/carros/sp/peugeot/208/de.2022?tipoveiculo=carros&estadocidade=S%C3%A3o%20Paulo&marca1=Peugeot&modelo1=208&kmde=999&kmate=50000&anunciante=Concession%C3%A1ria%7CLoja&page=1&anode=2022&precoate=62000"
+    "https://www.webmotors.com.br/api/stock/carros/fiat/argo?cidade=Campinas&precoate=62000&anode=2020&kmde=999&kmate=50000&anunciante=Concessionária|Loja&page=1",
+    "https://www.webmotors.com.br/api/stock/carros/peugeot/208?cidade=Campinas&precoate=62000&anode=2022&kmde=999&kmate=50000&anunciante=Concessionária|Loja&page=1"
 ]
 
 def enviar(msg):
@@ -18,55 +17,41 @@ def enviar(msg):
         "text": msg
     })
 
-async def buscar_links():
+def buscar_carros():
     encontrados = []
 
-    async with async_playwright() as p:
-        browser = await p.chromium.launch()
-        page = await browser.new_page()
+    for url in URLS:
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
+        if r.status_code != 200:
+            print(f"Erro ao acessar API: {r.status_code}")
+            continue
 
-        for url in URLS:
+        try:
+            data = r.json()
+        except:
+            print("⚠️ API não retornou JSON")
+            continue
 
-            await page.goto(url)
-
-            # espera página carregar
-            await page.wait_for_timeout(5000)
-
-            # scroll para carregar anúncios
-            await page.evaluate("""
-                window.scrollTo(0, document.body.scrollHeight)
-            """)
-
-            await page.wait_for_timeout(3000)
-
-            links = await page.eval_on_selector_all(
-                "a[href*='/comprar/']",
-                "elements => elements.map(e => e.href)"
-            )
-
-            encontrados.extend(links)
-
-        await browser.close()
+        # cada item é um carro
+        for carro in data.get("items", []):
+            link = carro.get("linkWebmotors")
+            if link:
+                encontrados.append(link)
 
     return list(set(encontrados))
 
 
-async def main():
+def main():
+    carros = buscar_carros()
 
-    links = await buscar_links()
-
-    if links:
-
+    if carros:
         msg = "🚗 Veículos encontrados:\n\n"
-
-        for l in links[:20]:
-            msg += l + "\n"
-
+        for c in carros[:20]:
+            msg += c + "\n"
         enviar(msg)
-
     else:
-        enviar("⚠️ Nenhum veículo encontrado.")
+        enviar("⚠️ Nenhum veículo encontrado na API.")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
