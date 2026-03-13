@@ -1,40 +1,50 @@
 import requests
+import os
 from bs4 import BeautifulSoup
+
+TOKEN = os.environ["TELEGRAM_TOKEN"]
+CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 
 URL_BASE = "https://www.webmotors.com.br"
 
-filtros = [
-    {"marca": "fiat", "modelo": "argo"},
-    {"marca": "peugeot", "modelo": "208"}
+def enviar(msg):
+    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+    requests.post(url, data={
+        "chat_id": CHAT_ID,
+        "text": msg
+    })
+
+headers = {"User-Agent": "Mozilla/5.0"}
+
+urls = [
+    "https://www.webmotors.com.br/carros/estoque/fiat/argo?cidade=Campinas",
+    "https://www.webmotors.com.br/carros/estoque/peugeot/208?cidade=Campinas"
 ]
 
-CIDADE = "Campinas"
+links = []
 
-def buscar_carros(marca, modelo):
-    url = f"{URL_BASE}/carros/estoque/{marca}/{modelo}?tipoveiculo=carros&cidade={CIDADE}"
-    headers = {"User-Agent": "Mozilla/5.0"}
+for url in urls:
     r = requests.get(url, headers=headers)
-    if r.status_code != 200:
-        print(f"Erro {r.status_code} ao acessar {marca} {modelo}")
-        return []
 
     soup = BeautifulSoup(r.text, "html.parser")
+
     carros = soup.find_all("a")
-    resultados = []
 
     for c in carros:
         link = c.get("href")
         if link and "/comprar/" in link:
             full_link = URL_BASE + link
-            resultados.append(full_link)
-    return resultados
+            links.append(full_link)
 
-# Rodar teste
-for f in filtros:
-    encontrados = buscar_carros(f["marca"], f["modelo"])
-    print(f"\n--- {f['marca'].capitalize()} {f['modelo'].capitalize()} ---")
-    if encontrados:
-        for link in encontrados[:20]:  # mostra até 20 links
-            print(link)
-    else:
-        print("Nenhum carro encontrado")
+links = list(set(links))
+
+if links:
+    mensagem = "🚗 Segue a lista de veículos encontrados:\n\n"
+
+    for l in links[:20]:
+        mensagem += l + "\n"
+
+    enviar(mensagem)
+
+else:
+    enviar("⚠️ Nenhum veículo encontrado no scraping.")
