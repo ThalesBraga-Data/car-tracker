@@ -1,5 +1,6 @@
 import requests
 import os
+from bs4 import BeautifulSoup
 
 TOKEN = os.environ["TELEGRAM_TOKEN"]
 CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
@@ -11,43 +12,26 @@ def enviar(msg):
         "text": msg
     })
 
-url = "https://www.webmotors.com.br/api/search/car"
-
-payload = {
-    "Page": 1,
-    "PageSize": 20,
-    "Sort": "Relevance",
-    "Filter": {
-        "Make": "FIAT",
-        "Model": "ARGO",
-        "City": "Campinas"
-    }
-}
+url = "https://www.webmotors.com.br/carros/estoque/fiat/argo?cidade=Campinas"
 
 headers = {
-    "User-Agent": "Mozilla/5.0",
-    "Content-Type": "application/json"
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36",
+    "Accept-Language": "pt-BR,pt;q=0.9",
+    "Accept": "text/html,application/xhtml+xml",
+    "Connection": "keep-alive"
 }
 
-r = requests.post(url, json=payload, headers=headers)
+r = requests.get(url, headers=headers)
 
-print("Status:", r.status_code)
-print(r.text[:500])
-
-try:
-    data = r.json()
-except:
-    enviar("❌ API não retornou JSON")
-    exit()
-
-carros = data.get("SearchResults", [])
+soup = BeautifulSoup(r.text, "html.parser")
 
 links = []
 
-for c in carros:
-    id_carro = c.get("ID")
-    if id_carro:
-        links.append(f"https://www.webmotors.com.br/comprar/{id_carro}")
+for a in soup.find_all("a", href=True):
+    if "/comprar/" in a["href"]:
+        links.append("https://www.webmotors.com.br" + a["href"])
+
+links = list(set(links))
 
 if links:
     msg = "🚗 Segue a lista de veículos encontrados:\n\n"
@@ -55,4 +39,4 @@ if links:
         msg += l + "\n"
     enviar(msg)
 else:
-    enviar("⚠️ API retornou 0 carros.")
+    enviar("⚠️ Nenhum veículo encontrado no scraping.")
