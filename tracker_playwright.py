@@ -71,4 +71,4 @@ async def main():
         print("Nenhum carro encontrado nesta rodada.")
 
 if __name__ == "__main__":
-    async asyncio.run(main())
+    asyncio.run(main())
