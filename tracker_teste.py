@@ -13,27 +13,41 @@ def enviar(msg):
 
 url = "https://www.webmotors.com.br/api/search/car"
 
-params = {
-    "url": "https://www.webmotors.com.br/carros/estoque/fiat/argo?cidade=Campinas"
+payload = {
+    "Page": 1,
+    "PageSize": 20,
+    "Sort": "Relevance",
+    "Filter": {
+        "Make": "FIAT",
+        "Model": "ARGO",
+        "City": "Campinas"
+    }
 }
 
 headers = {
-    "User-Agent": "Mozilla/5.0"
+    "User-Agent": "Mozilla/5.0",
+    "Content-Type": "application/json"
 }
 
-r = requests.get(url, params=params, headers=headers)
+r = requests.post(url, json=payload, headers=headers)
 
-data = r.json()
+print("Status:", r.status_code)
+print(r.text[:500])
+
+try:
+    data = r.json()
+except:
+    enviar("❌ API não retornou JSON")
+    exit()
 
 carros = data.get("SearchResults", [])
 
 links = []
 
 for c in carros:
-    if "Specification" in c:
-        id_carro = c["ID"]
-        link = f"https://www.webmotors.com.br/comprar/{id_carro}"
-        links.append(link)
+    id_carro = c.get("ID")
+    if id_carro:
+        links.append(f"https://www.webmotors.com.br/comprar/{id_carro}")
 
 if links:
     msg = "🚗 Segue a lista de veículos encontrados:\n\n"
@@ -41,4 +55,4 @@ if links:
         msg += l + "\n"
     enviar(msg)
 else:
-    enviar("⚠️ API retornou zero carros.")
+    enviar("⚠️ API retornou 0 carros.")
