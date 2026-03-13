@@ -13,47 +13,54 @@ URLS = [
 
 def enviar(msg):
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-    # Adicionado disable_web_page_preview para a mensagem não ficar gigante com fotos
     requests.post(url, data={"chat_id": CHAT_ID, "text": msg, "disable_web_page_preview": True})
 
 async def buscar_carros():
-    todos_carros = set() # Usar set evita duplicados automaticamente
+    todos_carros = set()
     
     async with async_playwright() as p:
-        # User-agent para evitar bloqueio básico
-        user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
+        # Lançando com argumentos para evitar detecção
+        browser = await p.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])
         
-        browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(user_agent=user_agent)
+        # Criando um contexto com Viewport e User Agent de gente de verdade
+        context = await browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            viewport={'width': 1920, 'height': 1080}
+        )
+        
         page = await context.new_page()
 
         for url in URLS:
             try:
-                # Timeout de 60s para garantir que a página carregue no GitHub Actions
-                await page.goto(url, wait_until="networkidle", timeout=60000)
+                print(f"Acessando: {url[:50]}...")
+                # Mudamos de 'networkidle' para 'commit' (mais rápido) e depois esperamos o seletor
+                await page.goto(url, wait_until="commit", timeout=60000)
                 
-                # Espera o container dos cards aparecer (seletor comum na Webmotors)
-                await page.wait_for_selector("div.ContainerCardVehicle", timeout=15000)
-                
-                # Um pequeno scroll ajuda a disparar o carregamento lazy-load
-                await page.evaluate("window.scrollBy(0, 1000)")
-                await asyncio.sleep(2)
+                # Espera o container principal ou um tempo fixo se o seletor falhar
+                try:
+                    await page.wait_for_selector("div.ContainerCardVehicle", timeout=20000)
+                except:
+                    print("Seletor não apareceu, tentando prosseguir assim mesmo...")
 
-                # Busca links que contenham '/comprar/' no href
-                links = await page.locator('a[href*="/comprar/"]').all_human_ids() # ou use o seletor abaixo
+                # Simula um scroll humano lento
+                await page.evaluate("window.scrollBy(0, 500)")
+                await asyncio.sleep(3)
+
+                # Busca links. O seletor da Webmotors muitas vezes usa h2 ou div para o link
                 elementos = await page.query_selector_all('a[href*="/comprar/"]')
                 
                 for e in elementos:
                     link = await e.get_attribute("href")
                     if link:
-                        # Garante que o link seja completo e limpo
-                        full_link = link if link.startswith("http") else f"https://www.webmotors.com.br{link}"
-                        # Limpa parâmetros de busca do link individual para ficar menor
-                        clean_link = full_link.split('?')[0]
-                        todos_carros.add(clean_link)
-            
+                        if "/comprar/carros/" in link:
+                            full_link = link if link.startswith("http") else f"https://www.webmotors.com.br{link}"
+                            clean_link = full_link.split('?')[0]
+                            todos_carros.add(clean_link)
+                
+                print(f"Encontrados {len(todos_carros)} links até agora.")
+
             except Exception as e:
-                print(f"Erro ao acessar {url}: {e}")
+                print(f"Erro ao acessar: {e}")
                 continue
 
         await browser.close()
@@ -62,13 +69,13 @@ async def buscar_carros():
 async def main():
     carros = await buscar_carros()
     if carros:
-        # Enviar em blocos se houver muitos, o Telegram tem limite de caracteres
-        total = len(carros)
-        msg = f"🚗 Encontrei {total} veículos novos!\n\n" + "\n\n".join(carros[:25])
-        enviar(msg)
+        # Envia de 20 em 20 para não estourar o limite do Telegram
+        for i in range(0, len(carros), 20):
+            bloco = carros[i:i+20]
+            msg = f"🚗 Carros Encontrados ({i+1}/{len(carros)}):\n\n" + "\n\n".join(bloco)
+            enviar(msg)
     else:
-        # Não enviar nada se não encontrar, para não spammar erro
-        print("Nenhum carro encontrado nesta rodada.")
+        print("Realmente não encontrou nada. Pode ser bloqueio de IP do GitHub.")
 
 if __name__ == "__main__":
     asyncio.run(main())
