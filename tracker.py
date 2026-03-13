@@ -14,9 +14,7 @@ def enviar(msg):
 
 url = "https://www.webmotors.com.br/carros/estoque/fiat/argo?tipoveiculo=carros&cidade=Campinas"
 
-headers = {
-    "User-Agent": "Mozilla/5.0"
-}
+headers = {"User-Agent": "Mozilla/5.0"}
 
 r = requests.get(url, headers=headers)
 
@@ -24,16 +22,18 @@ soup = BeautifulSoup(r.text, "html.parser")
 
 carros = soup.find_all("a")
 
-encontrados = []
+links = []
 
 for c in carros:
     link = c.get("href")
     if link and "/comprar/" in link:
-        encontrados.append("https://www.webmotors.com.br" + link)
+        links.append("https://www.webmotors.com.br" + link)
 
-if encontrados:
+links = list(set(links))
+
+if links:
     enviar("🚗 Carros encontrados:")
-    for c in encontrados[:5]:
-        enviar(c)
+    for l in links[:5]:
+        enviar(l)
 else:
     enviar("Nenhum carro encontrado agora.")
