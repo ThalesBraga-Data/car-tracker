@@ -1,87 +1,69 @@
 import os
-import asyncio
-from playwright.async_api import async_playwright
 import requests
+import json
 
 TOKEN = os.environ["TELEGRAM_TOKEN"]
 CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 
-# URLs simplificadas (removendo filtros pesados que disparam o bot detector)
-URLS = [
-    "https://www.webmotors.com.br/carros/sp-campinas/fiat/argo/de.2020?kmate=50000&precoate=62000",
-    "https://www.webmotors.com.br/carros/sp/peugeot/208/de.2022?kmate=50000&precoate=62000"
+# Configurações de Busca (Convertidas para o formato da API)
+BUSCAS = [
+    {"marca": "FIAT", "modelo": "ARGO", "ano_de": 2020, "preco_ate": 62000, "cidade": "Campinas"},
+    {"marca": "PEUGEOT", "modelo": "208", "ano_de": 2022, "preco_ate": 62000, "cidade": "SÃO PAULO"}
 ]
 
-def enviar(msg):
+def enviar_telegram(msg):
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
     requests.post(url, data={"chat_id": CHAT_ID, "text": msg, "disable_web_page_preview": True})
 
-async def buscar_carros():
-    todos_carros = set()
+def buscar_webmotors():
+    todos_links = []
     
-    async with async_playwright() as p:
-        # Lançando o browser SEM ser headless para tentar enganar o detector
-        # (No GitHub Actions ele roda em um framebuffer virtual)
-        browser = await p.chromium.launch(headless=True)
+    # Headers que simulam um navegador real para evitar bloqueio de API
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Origin": "https://www.webmotors.com.br",
+        "Referer": "https://www.webmotors.com.br/carros/estoque"
+    }
+
+    for busca in BUSCAS:
+        print(f"Buscando {busca['marca']} {busca['modelo']}...")
         
-        # Vamos usar um perfil de navegação mais "sujo"
-        context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-            extra_http_headers={
-                "Accept-Language": "pt-BR,pt;q=0.9",
-                "Referer": "https://www.google.com/"
-            }
-        )
+        # URL da API de busca da Webmotors
+        api_url = f"https://www.webmotors.com.br/api/search/car?p=1&qt=36&o=5&anode={busca['ano_de']}&precoate={busca['preco_ate']}"
         
-        page = await context.new_page()
-
-        # Bloqueia imagens e CSS para economizar tempo e evitar detecção de rastreadores
-        await page.route("**/*.{png,jpg,jpeg,svg,css}", lambda route: route.abort())
-
-        for url in URLS:
-            try:
-                print(f"Tentando burlar bloqueio: {url[:50]}")
+        try:
+            response = requests.get(api_url, headers=headers, timeout=15)
+            
+            if response.status_code == 200:
+                data = response.json()
+                veiculos = data.get("SearchResults", [])
                 
-                # Vai para a página e espera apenas o essencial
-                response = await page.goto(url, wait_until="commit")
-                
-                # Se o status for 403, fomos bloqueados por IP
-                if response.status == 403:
-                    print("Status 403: O IP do GitHub foi totalmente banido pela Webmotors.")
-                    continue
+                for carro in veiculos:
+                    # Monta o link base do anúncio
+                    marca = carro['Specification']['Make']['Value'].lower()
+                    modelo = carro['Specification']['Model']['Value'].lower().replace(" ", "-")
+                    id_anuncio = carro['UniqueId']
+                    
+                    link = f"https://www.webmotors.com.br/comprar/{marca}/{modelo}/4-portas/{busca['ano_de']}/{id_anuncio}"
+                    todos_links.append(link)
+            else:
+                print(f"Erro na API: Status {response.status_code}")
+        except Exception as e:
+            print(f"Falha na requisição: {e}")
 
-                # Espera o JS rodar um pouco
-                await asyncio.sleep(10)
+    return list(set(todos_links))
 
-                # Tática Ninja: Pegar todos os links que seguem o padrão de anúncio
-                # O comando abaixo extrai direto do HTML bruto se o seletor falhar
-                links = await page.evaluate('''() => {
-                    return Array.from(document.querySelectorAll('a'))
-                        .map(a => a.href)
-                        .filter(href => href.includes('/comprar/carros/'))
-                }''')
-
-                for link in links:
-                    clean_link = link.split('?')[0]
-                    if "/estoque" not in clean_link:
-                        todos_carros.add(clean_link)
-
-                print(f"Encontrados nesta URL: {len(links)}")
-
-            except Exception as e:
-                print(f"Erro: {e}")
-
-        await browser.close()
-    return list(todos_carros)
-
-async def main():
-    carros = await buscar_carros()
-    if carros:
-        msg = f"✅ Sucesso! Encontrei {len(carros)} carros:\n\n" + "\n\n".join(carros[:10])
-        enviar(msg)
+def main():
+    links = buscar_webmotors()
+    
+    if links:
+        # Enviando apenas os 15 primeiros para teste
+        msg = f"🚀 Encontrei {len(links)} carros via API!\n\n" + "\n\n".join(links[:15])
+        enviar_telegram(msg)
+        print(f"Sucesso! {len(links)} enviados.")
     else:
-        # Se falhar aqui, a Webmotors bloqueou a Amazon/Microsoft de vez
-        enviar("❌ A Webmotors bloqueou o servidor do GitHub. Preciso mudar de estratégia.")
+        print("A API também bloqueou ou não há resultados.")
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
