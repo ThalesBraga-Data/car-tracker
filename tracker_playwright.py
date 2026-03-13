@@ -6,9 +6,10 @@ import requests
 TOKEN = os.environ["TELEGRAM_TOKEN"]
 CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 
+# URLs simplificadas (removendo filtros pesados que disparam o bot detector)
 URLS = [
-    "https://www.webmotors.com.br/carros/sp-campinas/fiat/argo/de.2020?tipoveiculo=carros&localizacao=-22.9099384%2C-47.0626332x100km&estadocidade=S%C3%A3o%20Paulo-Campinas&marca1=FIAT&modelo1=ARGO&kmde=999&kmate=50000&anunciante=Concession%C3%A1ria%7CLoja&o=5&page=1&anode=2020&precoate=62000",
-    "https://www.webmotors.com.br/carros/sp/peugeot/208/de.2022?tipoveiculo=carros&estadocidade=S%C3%A3o%20Paulo&marca1=Peugeot&modelo1=208&kmde=999&kmate=50000&anunciante=Concession%C3%A1ria%7CLoja&page=1&anode=2022&precoate=62000"
+    "https://www.webmotors.com.br/carros/sp-campinas/fiat/argo/de.2020?kmate=50000&precoate=62000",
+    "https://www.webmotors.com.br/carros/sp/peugeot/208/de.2022?kmate=50000&precoate=62000"
 ]
 
 def enviar(msg):
@@ -19,49 +20,56 @@ async def buscar_carros():
     todos_carros = set()
     
     async with async_playwright() as p:
-        # Simulando um iPhone 13 para mudar a rota de filtragem do servidor
-        device = p.devices['iPhone 13']
+        # Lançando o browser SEM ser headless para tentar enganar o detector
+        # (No GitHub Actions ele roda em um framebuffer virtual)
         browser = await p.chromium.launch(headless=True)
         
+        # Vamos usar um perfil de navegação mais "sujo"
         context = await browser.new_context(
-            **device,
-            locale="pt-BR",
-            timezone_id="America/Sao_Paulo"
+            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            extra_http_headers={
+                "Accept-Language": "pt-BR,pt;q=0.9",
+                "Referer": "https://www.google.com/"
+            }
         )
         
         page = await context.new_page()
 
+        # Bloqueia imagens e CSS para economizar tempo e evitar detecção de rastreadores
+        await page.route("**/*.{png,jpg,jpeg,svg,css}", lambda route: route.abort())
+
         for url in URLS:
             try:
-                print(f"Tentando acesso mobile em: {url[:40]}...")
+                print(f"Tentando burlar bloqueio: {url[:50]}")
                 
-                # Vamos direto ao ponto, sem esperar idle
-                await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+                # Vai para a página e espera apenas o essencial
+                response = await page.goto(url, wait_until="commit")
                 
-                # Espera extra para renderização do JS
-                await asyncio.sleep(8) 
-                
-                # Scroll para garantir que os cards carreguem
-                await page.mouse.wheel(0, 2000)
-                await asyncio.sleep(2)
+                # Se o status for 403, fomos bloqueados por IP
+                if response.status == 403:
+                    print("Status 403: O IP do GitHub foi totalmente banido pela Webmotors.")
+                    continue
 
-                # Seletor mobile costuma ser diferente, vamos buscar por links de compra de forma genérica
-                links = await page.eval_on_selector_all(
-                    "a", 
-                    "elements => elements.map(el => el.href).filter(href => href.includes('/comprar/'))"
-                )
-                
+                # Espera o JS rodar um pouco
+                await asyncio.sleep(10)
+
+                # Tática Ninja: Pegar todos os links que seguem o padrão de anúncio
+                # O comando abaixo extrai direto do HTML bruto se o seletor falhar
+                links = await page.evaluate('''() => {
+                    return Array.from(document.querySelectorAll('a'))
+                        .map(a => a.href)
+                        .filter(href => href.includes('/comprar/carros/'))
+                }''')
+
                 for link in links:
                     clean_link = link.split('?')[0]
-                    # Evita links de parcelamento ou institucionais
-                    if "/carros/estoque" not in clean_link:
+                    if "/estoque" not in clean_link:
                         todos_carros.add(clean_link)
-                
-                print(f"Sucesso! Links encontrados: {len(todos_carros)}")
+
+                print(f"Encontrados nesta URL: {len(links)}")
 
             except Exception as e:
-                print(f"Erro na tentativa: {e}")
-                continue
+                print(f"Erro: {e}")
 
         await browser.close()
     return list(todos_carros)
@@ -69,10 +77,11 @@ async def buscar_carros():
 async def main():
     carros = await buscar_carros()
     if carros:
-        msg = f"🚗 {len(carros)} carros encontrados!\n\n" + "\n\n".join(carros[:15])
+        msg = f"✅ Sucesso! Encontrei {len(carros)} carros:\n\n" + "\n\n".join(carros[:10])
         enviar(msg)
     else:
-        print("Bloqueio persistente. O IP do GitHub Actions está na blacklist.")
+        # Se falhar aqui, a Webmotors bloqueou a Amazon/Microsoft de vez
+        enviar("❌ A Webmotors bloqueou o servidor do GitHub. Preciso mudar de estratégia.")
 
 if __name__ == "__main__":
     asyncio.run(main())
